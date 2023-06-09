@@ -16,6 +16,8 @@ class Runner
 
     protected Predis $redis;
 
+    protected string $run_id;
+
     /**
      * @param string $host
      * @param string|int $port
@@ -25,6 +27,8 @@ class Runner
      */
     public function __construct($host, $port, $auth, bool $verbose)
     {
+        $this->run_id = uniqid();
+
         $this->verbose = $verbose;
 
         $this->host = (string) $host;
@@ -73,6 +77,123 @@ class Runner
         ]);
     }
 
+    protected function resetStats() {
+        $this->redis->config('RESETSTAT');
+
+        if (function_exists('memory_reset_peak_usage')) {
+            \memory_reset_peak_usage();
+        }
+    }
+
+    protected function getNetworkStats() {
+        $info = $this->redis->info();
+        return [
+            $info['total_net_input_bytes'],
+            $info['total_net_output_bytes'],
+        ];
+    }
+
+    protected function saveIteration($method, $nanos) {
+        $this->redis->rpush(
+            "benchmark_run:{$this->run_id}:$method",
+            serialize([getmypid(), $ms, \memory_get_peak_usage()])
+        );
+    }
+
+    protected function loadIterations($method) {
+        $res = [];
+
+        foreach ($this->redis->lRange("benchmark_run:{$this->run_id}:$method") as $iteration) {
+            $res[] = unserialize($iteration);
+        }
+
+        return $res;
+    }
+
+    protected function runMethodConcurrent($reporter, $subject, $class, $method) {
+        $pids = [];
+
+        list($rx1, $tx1) = $this->getNetworkStats();
+
+        for ($i = 0; $i < $this->workers; $i++) {
+            $pid = pcntl_fork();
+            if ($pid < 0) {
+                fprintf(STDERR, "Error:  Cannot execute pcntl_fork()!\n");
+                exit(1);
+            } else if ($pid) {
+                $pids = [];
+            } else {
+                /* TODO:  Put this beghind a pid-aware accessor */
+                $this->setUpRedis();
+                $benchmark = new $class($this->host, $this->port, $this->auth);
+                $benchmark->setUp();
+
+                for ($i = 0; $i < $benchmark::Warmup; $i++) {
+                    for ($i = 1; $i <= $benchmark::Revolutions; $i++) {
+                        $benchmark->{$method}();
+                    }
+                }
+
+                for ($i = 0; $i < $benchmark::Iterations; $i++) {
+                    $start = hrtime(true);
+
+                    for ($r = 0; $r < $benchmark::Revolutions; $r++) {
+                        $benchmark->{$method}();
+                    }
+
+                    $this->saveIteration($method, (hrtime(true) - $start) / 1e+6);
+                }
+
+                exit(0);
+            }
+        }
+
+        foreach ($pids as $pid) {
+            pcntl_waitpid($pid, $status, WUNTRACED);
+        }
+
+        list($rx2, $tx2) = $this->getNetworkStats();
+
+        foreach ($this->loadIterations($method) as [$pid, $nanos, $peak_mem]) {
+            $iteration = $subject->addIteration($nanos / 1e+6, $peak_mem, $rx2 - $rx1, $tx2 - $tx1);
+            $reporter->finishedIteration($iteration);
+        }
+
+        $reporter->finishedSubject($subject);
+    }
+
+    protected function runMethod($reporter, $subject, $benchmark, $method) {
+        for ($i = 0; $i < $benchmark::Warmup; $i++) {
+            for ($i = 1; $i <= $benchmark::Revolutions; $i++) {
+                $benchmark->{$method}();
+            }
+        }
+
+        for ($i = 0; $i < $benchmark::Iterations; $i++) {
+            $this->resetStats();
+
+            usleep(100000); // 100ms
+
+            $start = hrtime(true);
+
+            for ($r = 1; $r <= $benchmark::Revolutions; $r++) {
+                $benchmark->{$method}();
+            }
+
+            $end = hrtime(true);
+            $memory = memory_get_peak_usage();
+            $ms = ($end - $start) / 1e+6;
+
+            list ($bytesIn, $bytesOut) = $this->getNetworkStats();
+
+            $iteration = $subject->addIteration($ms, $memory, $bytesIn, $bytesOut);
+
+            $reporter->finishedIteration($iteration);
+        }
+
+        $reporter->finishedSubject($subject);
+    }
+
     /**
      * @param class-string[] $benchmarks
      * @return void
@@ -89,50 +210,19 @@ class Runner
             $reporter = new CliReporter($this->verbose);
             $reporter->startingBenchmark($benchmark);
 
-            $methods = array_filter(
-                get_class_methods($benchmark),
-                fn ($method) => str_starts_with($method, 'benchmark')
-            );
-
-            foreach ($methods as $method) {
+            foreach ($benchmark->getBenchmarkMethods() as $method) {
                 $subject = $subjects->add($method);
 
+                /* NOTE:  Why are we doing this? */
                 usleep(500000); // 500ms
 
-                for ($i = 0; $i < $benchmark::Warmup; $i++) {
-                    for ($i = 1; $i <= $benchmark::Revolutions; $i++) {
-                        $benchmark->{$method}();
-                    }
+                if ($this->workers > 1) {
+                    $this->runMethodConcurrent($reporter, $subject, $class, $method);
+                } else {
+                    $this->runMethod($reporter, $subject, $benchmark, $method);
                 }
 
-                for ($i = 0; $i < $benchmark::Iterations; $i++) {
-                    $this->redis->config('RESETSTAT');
-                    if (function_exists('memory_reset_peak_usage')) {
-                        memory_reset_peak_usage();
-                    }
-
-                    usleep(100000); // 100ms
-
-                    $start = hrtime(true);
-
-                    for ($r = 1; $r <= $benchmark::Revolutions; $r++) {
-                        $benchmark->{$method}();
-                    }
-
-                    $end = hrtime(true);
-                    $memory = memory_get_peak_usage();
-                    $ms = ($end - $start) / 1e+6;
-
-                    $usage = $this->redis->info('STATS')['Stats'];
-                    $bytesIn = $usage['total_net_input_bytes'];
-                    $bytesOut = $usage['total_net_output_bytes'];
-
-                    $iteration = $subject->addIteration($ms, $memory, $bytesIn, $bytesOut);
-
-                    $reporter->finishedIteration($iteration);
-                }
-
-                $reporter->finishedSubject($subject);
+                $reporter->finishedSubjects($subjects);
             }
 
             $reporter->finishedSubjects($subjects);

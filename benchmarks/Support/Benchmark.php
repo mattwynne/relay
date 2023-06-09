@@ -163,4 +163,11 @@ abstract class Benchmark
             'exceptions' => true,
         ]);
     }
+
+    public function getBenchmarkMethods() {
+        return array_filter(
+            get_class_methods($this),
+            fn ($method) => str_starts_with($method, 'benchmark')
+        );
+    }
 }
