@@ -22,6 +22,8 @@ abstract class Benchmark
 
     protected PhpRedis $phpredis;
 
+    protected int $workers = 1;
+
     public function __construct(string $host, int $port, ?string $auth)
     {
         $this->host = $host;
@@ -46,12 +48,19 @@ abstract class Benchmark
 
     public function opsTotal(): int
     {
-        return static::Operations * static::Revolutions;
+        return $this->its() * $this->revs();
     }
 
     protected function flush(): void
     {
         $this->createPredis()->flushall();
+    }
+
+    public function setWorkers(int $n) {
+        if ($n < 0) {
+            throw new \Exception("Worker count cannot be <= 0");
+        }
+        $this->workers = $n;
     }
 
     /**

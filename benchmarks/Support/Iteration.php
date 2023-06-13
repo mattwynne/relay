@@ -31,6 +31,8 @@ class Iteration
     {
         $benchmark = $this->subject->benchmark;
 
+        printf("opsTotal -> %s, ms -> %d, sec -> %2.2f\n", number_format($benchmark->opsTotal()),
+               $this->ms, $this->ms / 1000);
         return $benchmark->opsTotal() / ($this->ms / 1000);
     }
 }

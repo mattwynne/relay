@@ -18,6 +18,8 @@ class Runner
 
     protected string $run_id;
 
+    protected int $workers;
+
     /**
      * @param string $host
      * @param string|int $port
@@ -25,7 +27,7 @@ class Runner
      * @param bool $verbose
      * @return void
      */
-    public function __construct($host, $port, $auth, bool $verbose)
+    public function __construct($host, $port, $auth, $workers, bool $verbose)
     {
         $this->run_id = uniqid();
 
@@ -34,6 +36,8 @@ class Runner
         $this->host = (string) $host;
         $this->port = (int) $port;
         $this->auth = empty($auth) ? null : $auth;
+
+        $this->workers = $workers;
 
         /** @var object{type: string, cores: int, arch: string} $cpu */
         $cpu = System::cpu();
@@ -86,7 +90,7 @@ class Runner
     }
 
     protected function getNetworkStats() {
-        $info = $this->redis->info();
+        $info = $this->redis->info('STATS')['Stats'];
         return [
             $info['total_net_input_bytes'],
             $info['total_net_output_bytes'],
@@ -94,16 +98,16 @@ class Runner
     }
 
     protected function saveIteration($method, $nanos) {
-        $this->redis->rpush(
+        $this->redis->sadd(
             "benchmark_run:{$this->run_id}:$method",
-            serialize([getmypid(), $ms, \memory_get_peak_usage()])
+            serialize([getmypid(), $nanos, \memory_get_peak_usage()])
         );
     }
 
     protected function loadIterations($method) {
         $res = [];
 
-        foreach ($this->redis->lRange("benchmark_run:{$this->run_id}:$method") as $iteration) {
+        foreach ($this->redis->smembers("benchmark_run:{$this->run_id}:$method") as $iteration) {
             $res[] = unserialize($iteration);
         }
 
@@ -121,28 +125,26 @@ class Runner
                 fprintf(STDERR, "Error:  Cannot execute pcntl_fork()!\n");
                 exit(1);
             } else if ($pid) {
-                $pids = [];
+                $pids[] = $pid;
             } else {
                 /* TODO:  Put this beghind a pid-aware accessor */
                 $this->setUpRedis();
                 $benchmark = new $class($this->host, $this->port, $this->auth);
                 $benchmark->setUp();
 
-                for ($i = 0; $i < $benchmark::Warmup; $i++) {
-                    for ($i = 1; $i <= $benchmark::Revolutions; $i++) {
+                for ($i = 0; $i < $benchmark::Warmup * $benchmark->revs(); $i++) {
+                    $benchmark->{$method}();
+                }
+
+                $start = hrtime(true);
+                for ($i = 0; $i < $benchmark->its(); $i++) {
+                    for ($j = 0; $j < $benchmark->revs(); $j++) {
                         $benchmark->{$method}();
                     }
                 }
+                $end = hrtime(true);
 
-                for ($i = 0; $i < $benchmark::Iterations; $i++) {
-                    $start = hrtime(true);
-
-                    for ($r = 0; $r < $benchmark::Revolutions; $r++) {
-                        $benchmark->{$method}();
-                    }
-
-                    $this->saveIteration($method, (hrtime(true) - $start) / 1e+6);
-                }
+                $this->saveIteration($method, $end - $start);
 
                 exit(0);
             }
@@ -154,10 +156,21 @@ class Runner
 
         list($rx2, $tx2) = $this->getNetworkStats();
 
+        $total_nanos = $max_peak_mem = 0;
+
         foreach ($this->loadIterations($method) as [$pid, $nanos, $peak_mem]) {
-            $iteration = $subject->addIteration($nanos / 1e+6, $peak_mem, $rx2 - $rx1, $tx2 - $tx1);
-            $reporter->finishedIteration($iteration);
+            $total_nanos += $nanos;
+            $max_peak_mem = max($peak_mem, $max_peak_mem);
         }
+
+        $iteration = $subject->addIteration($total_nanos / 1e+6, $max_peak_mem, $rx2 - $rx1, $tx2 - $tx1);
+        $reporter->finishedIteration($iteration);
+        $reporter->finishedSubject($subject);
+
+//        foreach ($this->loadIterations($method) as [$pid, $nanos, $peak_mem]) {
+//            $iteration = $subject->addIteration($nanos / 1e+6, $peak_mem, $rx2 - $rx1, $tx2 - $tx1);
+//            $reporter->finishedIteration($iteration);
+//        }
 
         $reporter->finishedSubject($subject);
     }
@@ -204,6 +217,7 @@ class Runner
             /** @var Benchmark $benchmark */
             $benchmark = new $class($this->host, $this->port, $this->auth);
             $benchmark->setUp();
+            $benchmark->setWorkers($this->workers);
 
             $subjects = new Subjects($benchmark);
 
@@ -214,15 +228,13 @@ class Runner
                 $subject = $subjects->add($method);
 
                 /* NOTE:  Why are we doing this? */
-                usleep(500000); // 500ms
+                // usleep(500000); // 500ms
 
                 if ($this->workers > 1) {
                     $this->runMethodConcurrent($reporter, $subject, $class, $method);
                 } else {
                     $this->runMethod($reporter, $subject, $benchmark, $method);
                 }
-
-                $reporter->finishedSubjects($subjects);
             }
 
             $reporter->finishedSubjects($subjects);
