@@ -19,13 +19,19 @@ class Subject
         $this->benchmark = $benchmark;
     }
 
+    public function setOpsTotal($total) {
+        $this->benchmark->setOpsTotal($total);
+    }
+
+    public function addIterationObject(Iteration $iteration) {
+        $this->iterations[] = $iteration;
+    }
+
     public function addIteration(float $ms, int $memory, int $bytesIn, int $bytesOut): Iteration
     {
-        $iterations = new Iteration($ms, $memory, $bytesIn, $bytesOut, $this);
-
-        $this->iterations[] = $iterations;
-
-        return $iterations;
+        $iteration = new Iteration($ms, $memory, $bytesIn, $bytesOut, $this);
+        $this->addIterationObject($iteration);
+        return $iteration;
     }
 
     public function client(): string
@@ -87,6 +93,7 @@ class Subject
     public function opsMedian()
     {
         $ops = array_map(function (Iteration $iteration) {
+            var_dump($iteration->opsPerSec());
             return $iteration->opsPerSec();
         }, $this->iterations);
 

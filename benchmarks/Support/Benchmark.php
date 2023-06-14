@@ -22,7 +22,7 @@ abstract class Benchmark
 
     protected PhpRedis $phpredis;
 
-    protected int $workers = 1;
+    protected $ops_total = NULL;
 
     public function __construct(string $host, int $port, ?string $auth)
     {
@@ -36,6 +36,10 @@ abstract class Benchmark
         //
     }
 
+    public function ops(): int {
+        return static::Operations;
+    }
+
     public function its(): int
     {
         return static::Iterations;
@@ -46,21 +50,21 @@ abstract class Benchmark
         return static::Revolutions;
     }
 
-    public function opsTotal(): int
-    {
-        return $this->its() * $this->revs();
+    public function opsTotal(): int {
+        if ($this->ops_total !== NULL) {
+            return $this->ops_total;
+        } else {
+            return $this->ops() * $this->revs();
+        }
+    }
+
+    public function setOpsTotal(int $total): void {
+        $this->ops_total = $total;
     }
 
     protected function flush(): void
     {
         $this->createPredis()->flushall();
-    }
-
-    public function setWorkers(int $n) {
-        if ($n < 0) {
-            throw new \Exception("Worker count cannot be <= 0");
-        }
-        $this->workers = $n;
     }
 
     /**
@@ -173,10 +177,15 @@ abstract class Benchmark
         ]);
     }
 
-    public function getBenchmarkMethods() {
+    public function getBenchmarkMethods(string $filter) {
         return array_filter(
             get_class_methods($this),
-            fn ($method) => str_starts_with($method, 'benchmark')
+            function ($method) use ($filter) {
+                if (!str_starts_with($method, 'benchmark'))
+                    return false;
+                $method = substr($method, strlen('benchmark'));
+                return !$filter || preg_match("/$filter/i", strtolower($method));
+            }
         );
     }
 }

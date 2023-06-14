@@ -12,7 +12,7 @@ class BenchmarkGet extends Support\Benchmark
 
     const Revolutions = 50;
 
-    const Warmup = 1;
+    const Warmup = 0;
 
     /**
      * @var array<int, string>
@@ -27,31 +27,27 @@ class BenchmarkGet extends Support\Benchmark
         $this->keys = $this->loadJson('meteorites.json');
     }
 
-    public function benchmarkPredis(): void
-    {
+    protected function doBenchmark($client) {
         foreach ($this->keys as $key) {
-            $this->predis->get((string) $key);
+            $client->get((string)$key);
         }
+
+        return count($this->keys);
     }
 
-    public function benchmarkPhpRedis(): void
-    {
-        foreach ($this->keys as $key) {
-            $this->phpredis->get((string) $key);
-        }
+    public function benchmarkPredis(): int {
+        return $this->doBenchmark($this->predis);
     }
 
-    public function benchmarkRelayNoCache(): void
-    {
-        foreach ($this->keys as $key) {
-            $this->relayNoCache->get((string) $key);
-        }
+    public function benchmarkPhpRedis(): int {
+        return $this->doBenchmark($this->phpredis);
     }
 
-    public function benchmarkRelay(): void
-    {
-        foreach ($this->keys as $key) {
-            $this->relay->get((string) $key);
-        }
+    public function benchmarkRelayNoCache(): int {
+        return $this->doBenchmark($this->relayNoCache);
+    }
+
+    public function benchmarkRelay(): int {
+        return $this->doBenchmark($this->relay);
     }
 }

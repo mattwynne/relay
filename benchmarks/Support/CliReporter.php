@@ -54,9 +54,9 @@ class CliReporter extends Reporter
 
         $benchmark = $subject->benchmark;
 
-        $ops = $benchmark::Operations;
-        $its = $benchmark::Iterations;
-        $revs = $benchmark::Revolutions;
+        $ops = $benchmark->ops();
+        $its = $benchmark->its();
+        $revs = $benchmark->revs();
         $name = $benchmark::Name;
 
         $ms_median = $subject->msMedian();

@@ -6,7 +6,7 @@ error_reporting(E_ALL);
 
 require __DIR__ . '/../vendor/autoload.php';
 
-$opt = getopt('h:p:s:a:v', ['verbose', 'workers:'], $optind);
+$opt = getopt('h:p:s:a:v', ['verbose', 'workers:', 'filter:'], $optind);
 
 array_splice($argv, 0, $optind);
 
@@ -24,6 +24,7 @@ try {
         $opt['p'] ?? (isset($opt['s']) ? 0 : 6379),
         $opt['a'] ?? null,
         $opt['workers'] ?? 0,
+        strtolower(trim($opt['filter'] ?? '')),
         isset($opt['v']) || isset($opt['verbose'])
     );
 

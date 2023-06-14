@@ -3,6 +3,7 @@
 namespace CacheWerk\Relay\Benchmarks\Support;
 
 use Predis\Client as Predis;
+use CacheWerk\Relay\Benchmarks\Support\RawIteration;
 
 class Runner
 {
@@ -20,6 +21,8 @@ class Runner
 
     protected int $workers;
 
+    protected string $filter;
+
     /**
      * @param string $host
      * @param string|int $port
@@ -27,11 +30,12 @@ class Runner
      * @param bool $verbose
      * @return void
      */
-    public function __construct($host, $port, $auth, $workers, bool $verbose)
+    public function __construct($host, $port, $auth, $workers, string $filter, bool $verbose)
     {
         $this->run_id = uniqid();
 
         $this->verbose = $verbose;
+        $this->filter = $filter;
 
         $this->host = (string) $host;
         $this->port = (int) $port;
@@ -97,10 +101,13 @@ class Runner
         ];
     }
 
-    protected function saveIteration($method, $nanos) {
+    protected function saveIteration($method, $operations, $nanos) {
+        printf("Saving iteration: %s ops, %s nanos (%2.2f sec)\n", number_format($operations), number_format($nanos),
+               $nanos / 1000000000.00);
+
         $this->redis->sadd(
             "benchmark_run:{$this->run_id}:$method",
-            serialize([getmypid(), $nanos, \memory_get_peak_usage()])
+            serialize([getmypid(), $operations, $nanos, \memory_get_peak_usage()])
         );
     }
 
@@ -136,15 +143,13 @@ class Runner
                     $benchmark->{$method}();
                 }
 
-                $start = hrtime(true);
-                for ($i = 0; $i < $benchmark->its(); $i++) {
-                    for ($j = 0; $j < $benchmark->revs(); $j++) {
-                        $benchmark->{$method}();
-                    }
-                }
-                $end = hrtime(true);
+                $operations = 0;
 
-                $this->saveIteration($method, $end - $start);
+                $start = hrtime(true);
+                for ($i = 0; $i < $benchmark->its() * $benchmark->revs(); $i++) {
+                    $operations += $benchmark->{$method}();
+                }
+                $this->saveIteration($method, $operations, hrtime(true) - $start);
 
                 exit(0);
             }
@@ -156,22 +161,16 @@ class Runner
 
         list($rx2, $tx2) = $this->getNetworkStats();
 
-        $total_nanos = $max_peak_mem = 0;
-
-        foreach ($this->loadIterations($method) as [$pid, $nanos, $peak_mem]) {
-            $total_nanos += $nanos;
-            $max_peak_mem = max($peak_mem, $max_peak_mem);
+        $tot_ns = $max_mem = $tot_ops = 0;
+        foreach ($this->loadIterations($method) as [$pid, $ops, $ns, $mem]) {
+            $tot_ops += $ops;
+            $tot_ns += $ns;
+            $max_mem = max($max_mem, $mem);
         }
 
-        $iteration = $subject->addIteration($total_nanos / 1e+6, $max_peak_mem, $rx2 - $rx1, $tx2 - $tx1);
-        $reporter->finishedIteration($iteration);
-        $reporter->finishedSubject($subject);
-
-//        foreach ($this->loadIterations($method) as [$pid, $nanos, $peak_mem]) {
-//            $iteration = $subject->addIteration($nanos / 1e+6, $peak_mem, $rx2 - $rx1, $tx2 - $tx1);
-//            $reporter->finishedIteration($iteration);
-//        }
-
+        $iteration = new RawIteration($tot_ops, $tot_ns / 1e+6, $max_mem, $rx2 - $rx1, $tx2 - $tx1);
+        $subject->addIterationObject($iteration);
+        $subject->setOpsTotal($tot_ops);
         $reporter->finishedSubject($subject);
     }
 
@@ -217,14 +216,14 @@ class Runner
             /** @var Benchmark $benchmark */
             $benchmark = new $class($this->host, $this->port, $this->auth);
             $benchmark->setUp();
-            $benchmark->setWorkers($this->workers);
+            //$benchmark->setWorkers($this->workers);
 
             $subjects = new Subjects($benchmark);
 
             $reporter = new CliReporter($this->verbose);
             $reporter->startingBenchmark($benchmark);
 
-            foreach ($benchmark->getBenchmarkMethods() as $method) {
+            foreach ($benchmark->getBenchmarkMethods($this->filter) as $method) {
                 $subject = $subjects->add($method);
 
                 /* NOTE:  Why are we doing this? */
