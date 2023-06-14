@@ -93,7 +93,6 @@ class Subject
     public function opsMedian()
     {
         $ops = array_map(function (Iteration $iteration) {
-            var_dump($iteration->opsPerSec());
             return $iteration->opsPerSec();
         }, $this->iterations);
 

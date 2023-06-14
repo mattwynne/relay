@@ -8,11 +8,11 @@ class BenchmarkGet extends Support\Benchmark
 
     const Operations = 1000;
 
-    const Iterations = 5;
+    const Iterations = 50;
 
     const Revolutions = 50;
 
-    const Warmup = 0;
+    const Warmup = 1;
 
     /**
      * @var array<int, string>

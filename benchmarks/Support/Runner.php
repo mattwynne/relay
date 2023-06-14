@@ -101,13 +101,10 @@ class Runner
         ];
     }
 
-    protected function saveIteration($method, $operations, $nanos) {
-        printf("Saving iteration: %s ops, %s nanos (%2.2f sec)\n", number_format($operations), number_format($nanos),
-               $nanos / 1000000000.00);
-
+    protected function saveOperations($method, $operations) {
         $this->redis->sadd(
             "benchmark_run:{$this->run_id}:$method",
-            serialize([getmypid(), $operations, $nanos, \memory_get_peak_usage()])
+            serialize([getmypid(), hrtime(true), $operations, \memory_get_peak_usage()])
         );
     }
 
@@ -126,6 +123,15 @@ class Runner
 
         list($rx1, $tx1) = $this->getNetworkStats();
 
+        /* Warm up once, outside of the forked workers */
+        $benchmark = new $class($this->host, $this->port, $this->auth);
+        $benchmark->setUp();
+        for ($i = 0; $i < $benchmark::Warmup * $benchmark->revs(); $i++) {
+            $benchmark->{$method}();
+        }
+
+        $start = hrtime(true);
+
         for ($i = 0; $i < $this->workers; $i++) {
             $pid = pcntl_fork();
             if ($pid < 0) {
@@ -139,17 +145,12 @@ class Runner
                 $benchmark = new $class($this->host, $this->port, $this->auth);
                 $benchmark->setUp();
 
-                for ($i = 0; $i < $benchmark::Warmup * $benchmark->revs(); $i++) {
-                    $benchmark->{$method}();
-                }
-
                 $operations = 0;
 
-                $start = hrtime(true);
                 for ($i = 0; $i < $benchmark->its() * $benchmark->revs(); $i++) {
                     $operations += $benchmark->{$method}();
                 }
-                $this->saveIteration($method, $operations, hrtime(true) - $start);
+                $this->saveOperations($method, $operations);
 
                 exit(0);
             }
@@ -161,14 +162,14 @@ class Runner
 
         list($rx2, $tx2) = $this->getNetworkStats();
 
-        $tot_ns = $max_mem = $tot_ops = 0;
-        foreach ($this->loadIterations($method) as [$pid, $ops, $ns, $mem]) {
+        $end = $max_mem = $tot_ops = 0;
+        foreach ($this->loadIterations($method) as [$pid, $now, $ops, $mem]) {
             $tot_ops += $ops;
-            $tot_ns += $ns;
             $max_mem = max($max_mem, $mem);
+            $end = max($end, $now);
         }
 
-        $iteration = new RawIteration($tot_ops, $tot_ns / 1e+6, $max_mem, $rx2 - $rx1, $tx2 - $tx1);
+        $iteration = new RawIteration($tot_ops, ($end - $start) / 1e+6, $max_mem, $rx2 - $rx1, $tx2 - $tx1);
         $subject->addIterationObject($iteration);
         $subject->setOpsTotal($tot_ops);
         $reporter->finishedSubject($subject);
