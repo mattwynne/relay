@@ -23,6 +23,8 @@ class Runner
 
     protected string $filter;
 
+    protected float $duration;
+
     /**
      * @param string $host
      * @param string|int $port
@@ -30,7 +32,7 @@ class Runner
      * @param bool $verbose
      * @return void
      */
-    public function __construct($host, $port, $auth, $workers, string $filter, bool $verbose)
+    public function __construct($host, $port, $auth, int $workers, float $duration, string $filter, bool $verbose)
     {
         $this->run_id = uniqid();
 
@@ -42,6 +44,7 @@ class Runner
         $this->auth = empty($auth) ? null : $auth;
 
         $this->workers = $workers;
+        $this->duration = $duration;
 
         /** @var object{type: string, cores: int, arch: string} $cpu */
         $cpu = System::cpu();
@@ -147,9 +150,9 @@ class Runner
 
                 $operations = 0;
 
-                for ($i = 0; $i < $benchmark->its() * $benchmark->revs(); $i++) {
+                do {
                     $operations += $benchmark->{$method}();
-                }
+                } while ((hrtime(true) - $start) / 1e+9 < $this->duration);
                 $this->saveOperations($method, $operations);
 
                 exit(0);
