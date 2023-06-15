@@ -121,6 +121,22 @@ class Runner
         return $res;
     }
 
+    protected function blockForWorkers() {
+        $waiting_key = "benchmark:spooling:{$this->run_id}";
+        $this->redis->incr($waiting_key);
+
+        while ($this->redis->get($waiting_key) < $this->workers)
+            ;
+    }
+
+    protected function setConcurrentStart() {
+        $this->redis->setnx("benchmark:start:{$this->run_id}", hrtime(true));
+    }
+
+    protected function getConcurrentStart() {
+        return $this->redis->get("benchmark:start:{$this->run_id}");
+    }
+
     protected function runMethodConcurrent($reporter, $subject, $class, $method) {
         $pids = [];
 
@@ -148,8 +164,12 @@ class Runner
                 $benchmark = new $class($this->host, $this->port, $this->auth);
                 $benchmark->setUp();
 
-                $operations = 0;
+                /* Wait for workers to be ready */
+                $this->blockForWorkers();
+                $this->setConcurrentStart();
 
+                /* Run operations */
+                $operations = 0;
                 do {
                     $operations += $benchmark->{$method}();
                 } while ((hrtime(true) - $start) / 1e+9 < $this->duration);
@@ -159,6 +179,7 @@ class Runner
             }
         }
 
+        /* Wait for workers to finish */
         foreach ($pids as $pid) {
             pcntl_waitpid($pid, $status, WUNTRACED);
         }
@@ -172,6 +193,7 @@ class Runner
             $end = max($end, $now);
         }
 
+        $start = $this->getConcurrentStart();
         $iteration = new RawIteration($tot_ops, ($end - $start) / 1e+6, $max_mem, $rx2 - $rx1, $tx2 - $tx1);
         $subject->addIterationObject($iteration);
         $subject->setOpsTotal($tot_ops);
