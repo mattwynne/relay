@@ -22,14 +22,14 @@ abstract class Benchmark
 
     protected PhpRedis $phpredis;
 
-    protected $ops_total = NULL;
-
     public function __construct(string $host, int $port, ?string $auth)
     {
         $this->host = $host;
         $this->port = $port;
         $this->auth = $auth;
     }
+
+    abstract public function getName(): string;
 
     public function setUp(): void
     {
@@ -51,15 +51,7 @@ abstract class Benchmark
     }
 
     public function opsTotal(): int {
-        if ($this->ops_total !== NULL) {
-            return $this->ops_total;
-        } else {
-            return $this->ops() * $this->revs();
-        }
-    }
-
-    public function setOpsTotal(int $total): void {
-        $this->ops_total = $total;
+        return $this->ops() * $this->revs();
     }
 
     protected function flush(): void
@@ -89,8 +81,7 @@ abstract class Benchmark
         return $keys;
     }
 
-    protected function setUpClients(): void
-    {
+    public function setUpClients(): void {
         $this->predis = $this->createPredis();
         $this->phpredis = $this->createPhpRedis();
         $this->relay = $this->createRelay();

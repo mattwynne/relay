@@ -138,18 +138,17 @@ class Runner
     }
 
     protected function runMethodConcurrent($reporter, $subject, $class, $method) {
-        $pids = [];
-
-        list($rx1, $tx1) = $this->getNetworkStats();
-
         /* Warm up once, outside of the forked workers */
         $benchmark = new $class($this->host, $this->port, $this->auth);
         $benchmark->setUp();
+
         for ($i = 0; $i < $benchmark::Warmup * $benchmark->revs(); $i++) {
             $benchmark->{$method}();
         }
 
         $start = hrtime(true);
+        list($rx1, $tx1) = $this->getNetworkStats();
+        $pids = [];
 
         for ($i = 0; $i < $this->workers; $i++) {
             $pid = pcntl_fork();
@@ -159,10 +158,10 @@ class Runner
             } else if ($pid) {
                 $pids[] = $pid;
             } else {
-                /* TODO:  Put this beghind a pid-aware accessor */
+                /* Refresh clients since we're in a forked child process.
+                   NOTE:  Not required for Relay but for the others it is. */
                 $this->setUpRedis();
-                $benchmark = new $class($this->host, $this->port, $this->auth);
-                $benchmark->setUp();
+                $benchmark->setUpClients();
 
                 /* Wait for workers to be ready */
                 $this->blockForWorkers();
@@ -196,8 +195,7 @@ class Runner
         $start = $this->getConcurrentStart();
         $iteration = new RawIteration($tot_ops, ($end - $start) / 1e+6, $max_mem, $rx2 - $rx1, $tx2 - $tx1);
         $subject->addIterationObject($iteration);
-        $subject->setOpsTotal($tot_ops);
-        $reporter->finishedSubject($subject);
+        $reporter->finishedTimedSubject($subject, $tot_ops, ($end - $start) / 1e+6);
     }
 
     protected function runMethod($reporter, $subject, $benchmark, $method) {
@@ -226,7 +224,8 @@ class Runner
 
             $iteration = $subject->addIteration($ms, $memory, $bytesIn, $bytesOut);
 
-            $reporter->finishedIteration($iteration);
+            $reporter->finishedIteration($iteration, $benchmark->getName(),
+                                         $subject->client());
         }
 
         $reporter->finishedSubject($subject);
@@ -242,18 +241,19 @@ class Runner
             /** @var Benchmark $benchmark */
             $benchmark = new $class($this->host, $this->port, $this->auth);
             $benchmark->setUp();
-            //$benchmark->setWorkers($this->workers);
 
             $subjects = new Subjects($benchmark);
 
             $reporter = new CliReporter($this->verbose);
-            $reporter->startingBenchmark($benchmark);
+
+            if ($this->workers > 1) {
+                $reporter->startingTimedBenchmark($benchmark, $this->workers, $this->duration);
+            } else {
+                $reporter->startingBenchmark($benchmark);
+            }
 
             foreach ($benchmark->getBenchmarkMethods($this->filter) as $method) {
                 $subject = $subjects->add($method);
-
-                /* NOTE:  Why are we doing this? */
-                // usleep(500000); // 500ms
 
                 if ($this->workers > 1) {
                     $this->runMethodConcurrent($reporter, $subject, $class, $method);
@@ -262,7 +262,11 @@ class Runner
                 }
             }
 
-            $reporter->finishedSubjects($subjects);
+            if ($this->workers > 1) {
+                $reporter->finishedSubjectsConcurrent($subjects, $this->workers);
+            } else {
+                $reporter->finishedSubjects($subjects);
+            }
         }
     }
 

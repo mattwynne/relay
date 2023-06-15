@@ -4,8 +4,6 @@ namespace CacheWerk\Relay\Benchmarks;
 
 class BenchmarkMget extends Support\Benchmark
 {
-    const Name = 'MGET';
-
     const Operations = 100;
 
     const Iterations = 5;
@@ -19,6 +17,10 @@ class BenchmarkMget extends Support\Benchmark
      */
     protected array $keyChunks;
 
+    public function getName(): string {
+        return 'MGET';
+    }
+
     public function setUp(): void
     {
         $this->flush();
@@ -30,31 +32,26 @@ class BenchmarkMget extends Support\Benchmark
         $this->keyChunks = array_chunk($keys, $length); // @phpstan-ignore-line
     }
 
-    public function benchmarkPredis(): void
-    {
+    protected function doBenchmark($client): int {
         foreach ($this->keyChunks as $keys) {
-            $this->predis->mget($keys);
+            $client->mget($keys);
         }
+        return count($this->keyChunks);
     }
 
-    public function benchmarkPhpRedis(): void
-    {
-        foreach ($this->keyChunks as $keys) {
-            $this->phpredis->mget($keys);
-        }
+    public function benchmarkPredis(): int {
+        return $this->doBenchmark($this->predis);
     }
 
-    public function benchmarkRelayNoCache(): void
-    {
-        foreach ($this->keyChunks as $keys) {
-            $this->relayNoCache->mget($keys);
-        }
+    public function benchmarkPhpRedis(): int {
+        return $this->doBenchmark($this->phpredis);
     }
 
-    public function benchmarkRelay(): void
-    {
-        foreach ($this->keyChunks as $keys) {
-            $this->relay->mget($keys);
-        }
+    public function benchmarkRelayNoCache(): int {
+        return $this->doBenchmark($this->relayNoCache);
+    }
+
+    public function benchmarkRelay(): int {
+        return $this->doBenchmark($this->relay);
     }
 }

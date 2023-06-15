@@ -7,8 +7,6 @@ use Relay\Relay;
 
 class BenchmarkZstdIgbinary extends Support\Benchmark
 {
-    const Name = 'GET';
-
     const Operations = 1000;
 
     const Iterations = 5;
@@ -29,6 +27,10 @@ class BenchmarkZstdIgbinary extends Support\Benchmark
      */
     protected array $keys;
 
+    public function getName(): string {
+        return 'GET (Serialized)';
+    }
+
     public function setUp(): void
     {
         $this->flush();
@@ -44,62 +46,53 @@ class BenchmarkZstdIgbinary extends Support\Benchmark
         $this->seedPhpRedis();
     }
 
-    public function benchmarkPredis(): void
-    {
+    protected function doBenchmark($client, $name): int {
         foreach ($this->keys as $key) {
-            $value = $this->predis->get("predis:{$key}");
+            $client->get("$name:$key");
         }
+        return count($this->keys);
     }
 
-    public function benchmarkPhpRedis(): void
-    {
-        foreach ($this->keys as $key) {
-            $value = $this->phpredis->get("phpredis:{$key}");
-        }
+    public function benchmarkPredis(): int {
+        return $this->doBenchmark($this->predis, "predis");
     }
 
-    public function benchmarkRelayNoCache(): void
-    {
-        foreach ($this->keys as $key) {
-            $value = $this->relayNoCache->get("relay:{$key}");
-        }
+    public function benchmarkPhpRedis(): int {
+        return $this->doBenchmark($this->phpredis, "phpredis");
     }
 
-    public function benchmarkRelay(): void
-    {
-        foreach ($this->keys as $key) {
-            $value = $this->relay->get("relay:{$key}");
-        }
+    public function benchmarkRelayNoCache(): int {
+        return $this->doBenchmark($this->relayNoCache, "relay");
     }
 
-    protected function seedPredis(): void
-    {
+    public function benchmarkRelay(): int {
+        return $this->doBenchmark($this->relay, "relay");
+    }
+
+    protected function seedClient($client, $name, $items) {
         foreach ($this->data as $item) {
-            $this->predis->set("predis:{$item->id}", serialize($this->randomItems()));
+            $client->set("$name:{$item->id}", $items);
         }
     }
 
-    protected function seedPhpRedis(): void
-    {
+    protected function seedPredis(): void {
+        $this->seedClient($this->predis, "predis", serialize($this->randomItems()));
+    }
+
+    protected function seedPhpRedis(): void {
         $this->phpredis->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_IGBINARY);
         $this->phpredis->setOption(Redis::OPT_COMPRESSION, Redis::COMPRESSION_ZSTD);
-
-        foreach ($this->data as $item) {
-            $this->phpredis->set("phpredis:{$item->id}", $this->randomItems());
-        }
+        $this->seedClient($this->phpredis, "phpredis", $this->randomItems());
     }
 
     protected function seedRelay(): void
     {
         $this->relayNoCache->setOption(Relay::OPT_SERIALIZER, Relay::SERIALIZER_IGBINARY);
         $this->relayNoCache->setOption(Relay::OPT_COMPRESSION, Relay::COMPRESSION_ZSTD);
-
         $this->relay->setOption(Relay::OPT_SERIALIZER, Relay::SERIALIZER_IGBINARY);
         $this->relay->setOption(Relay::OPT_COMPRESSION, Relay::COMPRESSION_ZSTD);
 
-        foreach ($this->data as $item) {
-            $this->relayNoCache->set("relay:{$item->id}", $this->randomItems());
-        }
+        $this->seedClient($this->relayNoCache, "relay", $this->randomItems());
     }
 
     /**

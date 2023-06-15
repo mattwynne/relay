@@ -13,37 +13,34 @@ class CliReporter extends Reporter
 {
     public function startingBenchmark(Benchmark $benchmark): void
     {
-        $reflect = new ReflectionClass($benchmark);
-
         printf(
             "\n\033[30;42m %s \033[0m Executing %d iterations (%d warmup, %d revs) of %s %s operations...\n\n",
-            substr(basename($reflect->getShortName()), 9),
+            $benchmark->getName(),
             $benchmark->its(),
             $benchmark::Warmup ?? 'no',
             $benchmark->revs(),
             number_format($benchmark->opsTotal()),
-            $benchmark::Name
+            $benchmark->getName(),
         );
     }
 
-    public function finishedIteration(Iteration $iteration): void
+    public function startingTimedBenchmark(Benchmark $benchmark, int $workers, float $duration) {
+        printf(
+            "\n\033[30;42m %s \033[0m Executing operations for %2.2fs using %d workers (warmup: %s)...\n\n",
+            $benchmark->getName(),
+            $duration,
+            $workers,
+            $benchmark::Warmup ?? 'no',
+        );
+    }
+
+    public function finishedIteration(Iteration $iteration, string $operation, string $client): void
     {
         if (! $this->verbose) {
             return;
         }
 
-        $benchmark = $iteration->subject->benchmark;
-
-        printf(
-            "Executed %s %s using %s in %sms (%s ops/s) [memory:%s, network:%s]\n",
-            number_format($benchmark->opsTotal()),
-            $benchmark::Name,
-            $iteration->subject->client(),
-            number_format($iteration->ms, 2),
-            $this->humanNumber($iteration->opsPerSec()),
-            $this->humanMemory($iteration->memory),
-            $this->humanMemory($iteration->bytesIn + $iteration->bytesOut)
-        );
+        echo $iteration->finishedIterationMsg($operation, $client);
     }
 
     public function finishedSubject(Subject $subject): void
@@ -57,7 +54,7 @@ class CliReporter extends Reporter
         $ops = $benchmark->ops();
         $its = $benchmark->its();
         $revs = $benchmark->revs();
-        $name = $benchmark::Name;
+        $name = $benchmark->getName();
 
         $ms_median = $subject->msMedian();
         $memory_median = $subject->memoryMedian();
@@ -74,10 +71,59 @@ class CliReporter extends Reporter
             $subject->client(),
             number_format($ms_median, 2),
             $rstdev,
-            $this->humanNumber($ops_sec),
-            $this->humanMemory($memory_median),
-            $this->humanMemory($bytes_median * $its)
+            self::humanNumber($ops_sec),
+            self::humanMemory($memory_median),
+            self::humanMemory($bytes_median * $its)
         );
+    }
+
+    public function finishedTimedSubject(Subject $subject, int $operations, float $millis): void {
+        if (! $this->verbose)
+            return;
+
+        printf("Executed %s %s using %s in %sms (%s/sec)\n",
+               self::humanNumber($operations),
+               $subject->benchmark->getName(),
+               $subject->client(),
+               number_format($millis, 2),
+               self::humanNumber($operations / ($millis / 1000.00), 2)
+        );
+    }
+
+    public function finishedSubjectsConcurrent(Subjects $subjects, int $workers) {
+        $output = new StreamOutput(fopen('php://stdout', 'w')); // @phpstan-ignore-line
+
+        $table = new Table($output);
+
+        $table->setHeaders([
+            'Workers', 'Client', 'Memory', 'Network', 'IOPS', 'IOPS/Worker', 'Change', 'Factor',
+        ]);
+
+        $subjects = $subjects->sortByOpsPerSec();
+        $baseOpsPerSec = $subjects[0]->opsMedian();
+
+        $style_right = ['style' => new TableCellStyle(['align' => 'right'])];
+
+        foreach ($subjects as $i => $subject) {
+            $opsPerWorker = $subject->opsMedian() / $workers;
+            $diff = -(1 - ($subject->opsMedian() / $baseOpsPerSec)) * 100;
+
+            $factor = $i === 0 ? 1 : number_format($subject->opsMedian() / $baseOpsPerSec, 2);
+            $change = $i === 0 ? 0 : number_format($diff, 2);
+
+            $table->addRow([
+                new TableCell($workers, ['style' => new TableCellStyle(['align' => 'right'])]),
+                $subject->client(),
+                new TableCell(self::humanMemory($subject->memoryMedian()), $style_right),
+                new TableCell(self::humanMemory($subject->bytesMedian()), $style_right),
+                new TableCell(self::humanNumber($subject->opsMedian()), $style_right),
+                new TableCell(self::humanNumber($opsPerWorker), $style_right),
+                new TableCell("{$change}%", $style_right),
+                new TableCell("{$factor}", $style_right),
+            ]);
+        }
+
+        $table->render();
     }
 
     public function finishedSubjects(Subjects $subjects): void
@@ -112,9 +158,9 @@ class CliReporter extends Reporter
 
             $table->addRow([
                 $subject->client(),
-                new TableCell($this->humanMemory($memoryMedian), ['style' => new TableCellStyle(['align' => 'right'])]),
-                new TableCell($this->humanMemory($bytesMedian), ['style' => new TableCellStyle(['align' => 'right'])]),
-                new TableCell($this->humanNumber($opsMedian), ['style' => new TableCellStyle(['align' => 'right'])]),
+                new TableCell(self::humanMemory($memoryMedian), ['style' => new TableCellStyle(['align' => 'right'])]),
+                new TableCell(self::humanMemory($bytesMedian), ['style' => new TableCellStyle(['align' => 'right'])]),
+                new TableCell(self::humanNumber($opsMedian), ['style' => new TableCellStyle(['align' => 'right'])]),
                 new TableCell("±{$rstdev}%", ['style' => new TableCellStyle(['align' => 'right'])]),
                 new TableCell("{$time}ms", ['style' => new TableCellStyle(['align' => 'right'])]),
                 new TableCell("{$change}%", ['style' => new TableCellStyle(['align' => 'right'])]),

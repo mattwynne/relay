@@ -19,10 +19,6 @@ class Subject
         $this->benchmark = $benchmark;
     }
 
-    public function setOpsTotal($total) {
-        $this->benchmark->setOpsTotal($total);
-    }
-
     public function addIterationObject(Iteration $iteration) {
         $this->iterations[] = $iteration;
     }
@@ -97,5 +93,16 @@ class Subject
         }, $this->iterations);
 
         return Statistics::median($ops);
+    }
+
+    /**
+     * @return int|float
+     */
+    public function opsBase() {
+        $ops = array_map(function (Iteration $iteration) {
+            return $iteration->opsPerSec();
+        }, $this->iterations);
+
+        return min($ops);
     }
 }

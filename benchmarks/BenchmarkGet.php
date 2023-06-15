@@ -4,11 +4,9 @@ namespace CacheWerk\Relay\Benchmarks;
 
 class BenchmarkGet extends Support\Benchmark
 {
-    const Name = 'GET';
-
     const Operations = 1000;
 
-    const Iterations = 50;
+    const Iterations = 5;
 
     const Revolutions = 50;
 
@@ -18,6 +16,10 @@ class BenchmarkGet extends Support\Benchmark
      * @var array<int, string>
      */
     protected array $keys;
+
+    public function getName(): string {
+        return 'GET';
+    }
 
     public function setUp(): void
     {
