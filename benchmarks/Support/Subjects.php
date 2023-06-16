@@ -40,7 +40,7 @@ class Subjects
     public function sortByOpsPerSec() {
         $subjects = $this->subjects;
 
-        usort($this->subjects, fn($a, $b) => $a->opsMedian() < $b->opsMedian() ? 1 : -1);
+        usort($subjects, fn($a, $b) => $a->opsMedian() >= $b->opsMedian() ? 1 : -1);
 
         return $subjects;
     }

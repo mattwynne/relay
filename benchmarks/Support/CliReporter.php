@@ -77,13 +77,14 @@ class CliReporter extends Reporter
         );
     }
 
-    public function finishedTimedSubject(Subject $subject, int $operations, float $millis): void {
+    public function finishedTimedSubject(Subject $subject, int $operations, float $millis, int $redisCommands): void {
         if (! $this->verbose)
             return;
 
-        printf("Executed %s %s using %s in %sms (%s/sec)\n",
+        printf("Executed %s %s (%s Redis commands) using %s in %sms (%s/sec)\n",
                self::humanNumber($operations),
                $subject->benchmark->getName(),
+               self::humanNumber($redisCommands),
                $subject->client(),
                number_format($millis, 2),
                self::humanNumber($operations / ($millis / 1000.00), 2)
@@ -98,6 +99,7 @@ class CliReporter extends Reporter
         $table->setHeaders([
             'Workers', 'Client', 'Memory', 'Network', 'IOPS', 'IOPS/Worker', 'Change', 'Factor',
         ]);
+
 
         $subjects = $subjects->sortByOpsPerSec();
         $baseOpsPerSec = $subjects[0]->opsMedian();

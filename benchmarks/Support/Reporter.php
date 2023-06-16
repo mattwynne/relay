@@ -17,7 +17,7 @@ abstract class Reporter
 
     abstract function finishedSubject(Subject $subject): void;
 
-    abstract public function finishedTimedSubject(Subject $subject, int $operations, float $millis): void;
+    abstract public function finishedTimedSubject(Subject $subject, int $operations, float $millis, int $redisCommands): void;
 
     abstract function finishedSubjects(Subjects $subjects): void;
 
