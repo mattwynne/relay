@@ -104,6 +104,21 @@ class Runner
         ];
     }
 
+    protected function getRedisCommandCount() : array {
+        $result = [];
+
+        $stats = $this->redis->info('commandstats')['Commandstats'];
+
+        foreach ($stats as $key => $val) {
+            $cmd = strtoupper(str_replace('cmdstat_', '', $key));
+            if ( ! preg_match('/calls=([0-9]+).*/', $val, $matches))
+                continue;
+            $result[$cmd] = $matches[1];
+        }
+
+        return $result;
+    }
+
     protected function saveOperations($method, $operations) {
         $this->redis->sadd(
             "benchmark_run:{$this->run_id}:$method",
@@ -121,12 +136,24 @@ class Runner
         return $res;
     }
 
-    protected function blockForWorkers() {
+    protected function blockForWorkers($timeout = 1.0) {
         $waiting_key = "benchmark:spooling:{$this->run_id}";
-        $this->redis->incr($waiting_key);
 
-        while ($this->redis->get($waiting_key) < $this->workers)
-            ;
+        /* Short circuit, if we're the last worker to spawn */
+        if ($this->redis->incr($waiting_key) == $this->workers)
+            return;
+
+        /* Wait for all of the workers to be ready up to a predefined maximum time.
+           Because this is benchmarking code, we don't invoke the time() syscall each
+           iteration. */
+        $st = microtime(true);
+        for ($i = 1; $this->redis->get($waiting_key) < $this->workers; $i++) {
+            if ($i % 10000 == 0 && ($et = microtime(true)) - $st >= $timeout) {
+                fprintf(STDERR, "Error:  Timed out waiting for %d workers to span (%2.2fs)\n",
+                        $this->workers, $et - $st);
+                exit(1);
+            }
+        }
     }
 
     protected function setConcurrentStart() {
@@ -145,6 +172,8 @@ class Runner
         for ($i = 0; $i < $benchmark::Warmup * $benchmark->revs(); $i++) {
             $benchmark->{$method}();
         }
+
+        $this->getRedisCommandCount();
 
         $start = hrtime(true);
         list($rx1, $tx1) = $this->getNetworkStats();
